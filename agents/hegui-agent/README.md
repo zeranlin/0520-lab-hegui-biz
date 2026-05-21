@@ -4,10 +4,47 @@
 
 它只做一件事：接收一个待审查招标文件，读取 `config/hegui.yaml` 指向的只读 LLM Wiki 知识，调用 `config/` 中的 LLM 配置完成审查，并把审查报告和运行记录输出到 `outputs/`。
 
+## 职责边界
+
+`hegui_cli.py` 不是审查知识库，不在 biz 侧沉淀政府采购业务规则。
+
+biz 侧负责：
+
+- 按 LLM Wiki 入口指引调度审查生产线。
+- 记录各阶段使用的 Wiki 页面、动作、风险审查点和原文证据。
+- 当 Wiki 协议无法稳定驱动审查时，形成反馈记录。
+- 维护模型配置、文件抽取、结构化表格可读性、大文件处理、输出隔离、跨平台兼容、运行记录和错误诊断等工程能力。
+
+biz 侧不负责：
+
+- 修改、维护或反哺 LLM Wiki。
+- 在执行器内写死业务风险判断。
+- 用代码规则替代 Wiki 的审查协议。
+- 使用外部标注、标准答案或历史审查记录反推风险点。
+
+相关治理文档：
+
+- `docs/hegui_cli_review_sop.md`
+- `docs/hegui_cli_wiki_driven_issues.md`
+
 ## 使用方式
+
+原有入口保持不变：
 
 ```bash
 python agents/hegui-agent/hegui_cli.py '<待审查文件相对路径>'
+```
+
+SOP 治理版新入口：
+
+```bash
+python agents/hegui-agent/hegui_cli_sop.py '<待审查文件相对路径>'
+```
+
+只执行 SOP 运行前检查，不调用模型：
+
+```bash
+python agents/hegui-agent/hegui_cli_sop.py --sop-check-only
 ```
 
 待审查文件可以使用本项目内相对路径，也可以使用本项目内文件的绝对路径。文件画像、品类路由和专项动作由 LLM Wiki 审查协议决定。

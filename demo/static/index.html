@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>政府采购招标文件合规审查工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="product-shell">
+    <header class="product-header">
+      <div class="brand-line">
+        <div class="brand-mark">合</div>
+        <div>
+          <p class="eyebrow">政府采购招标文件</p>
+          <h1>合规审查工作台</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="startReview" class="primary-button" disabled>开始生成</button>
+      </div>
+    </header>
+
+    <main class="review-board">
+      <section class="hero-panel">
+        <div>
+          <p class="eyebrow">AI 辅助专家审查</p>
+          <h2>上传招标文件，生成可复核的合规审查意见</h2>
+          <p>系统按 LLM Wiki 指引执行 01-文件画像、02-知识路由表、03-动作清单、04-动作执行记录、05-原子风险清单、06-质量门检查表、07-AI审查记录、08-运行记录。</p>
+        </div>
+        <label class="upload-box" id="uploadBox">
+          <input id="fileInput" type="file" accept=".pdf,.docx,.txt,.md">
+          <span>上传文件</span>
+          <strong id="uploadTitle">选择 PDF / DOCX 招标文件</strong>
+          <em id="uploadMeta">文件上传后即可开始生成审查意见</em>
+        </label>
+      </section>
+
+      <section class="decision-panel" id="decisionPanel">
+        <div>
+          <p class="eyebrow">专家发布意见</p>
+          <h2 id="releaseStatus">待生成</h2>
+          <p id="releaseReason">上传文件并开始生成后，系统会按专家审查逻辑汇总发布建议。</p>
+        </div>
+        <div class="project-facts">
+          <div>
+            <span>项目名称</span>
+            <strong id="projectTitle">未上传</strong>
+          </div>
+          <div>
+            <span>采购方式</span>
+            <strong id="projectMethod">--</strong>
+          </div>
+          <div>
+            <span>采购品目</span>
+            <strong id="projectCategory">--</strong>
+          </div>
+          <div>
+            <span>预算金额</span>
+            <strong id="projectBudget">--</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics-row">
+        <div>
+          <span>风险点</span>
+          <strong id="riskCount">--</strong>
+        </div>
+        <div>
+          <span>高风险</span>
+          <strong id="highRiskCount">--</strong>
+        </div>
+        <div>
+          <span>人工复核</span>
+          <strong id="manualReviewCount">--</strong>
+        </div>
+        <div>
+          <span>证据链</span>
+          <strong id="stageCount">--</strong>
+        </div>
+        <div>
+          <span>任务状态</span>
+          <strong id="jobStatus">等待上传</strong>
+        </div>
+      </section>
+
+      <section class="progress-card">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">审查进度</p>
+            <h3>指引流程执行情况</h3>
+          </div>
+          <span id="progressSummary">尚未开始</span>
+        </div>
+        <div class="progress-layout">
+          <div id="businessProgress" class="business-progress"></div>
+          <aside class="progress-inspector">
+            <p class="eyebrow">阶段关键信息</p>
+            <h4 id="progressInspectorTitle">等待审查启动</h4>
+            <div id="progressInspectorBody" class="inspector-body">上传文件并开始生成后，这里展示当前阶段的业务摘要。</div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="expert-layout">
+        <div class="main-flow">
+          <div class="section-title">
+            <div>
+              <p class="eyebrow">专家分诊</p>
+              <h3>按审查重点处理</h3>
+            </div>
+          </div>
+          <div id="expertModules" class="module-grid"></div>
+
+          <div class="section-title opinion-title">
+            <div>
+              <p class="eyebrow">审查意见</p>
+              <h3>整改处理清单</h3>
+            </div>
+            <div class="segmented">
+              <button class="filter active" data-filter="all">全部</button>
+              <button class="filter" data-filter="必须修改">必须修改</button>
+              <button class="filter" data-filter="建议修改">建议修改</button>
+              <button class="filter" data-filter="需人工复核">人工复核</button>
+            </div>
+          </div>
+          <div id="opinionList" class="opinion-list empty-state">审查完成后展示专家整改意见。</div>
+        </div>
+
+        <aside class="right-rail">
+          <div class="rail-card">
+            <div class="section-title compact">
+              <div>
+                <p class="eyebrow">下一步</p>
+                <h3>处理建议</h3>
+              </div>
+            </div>
+            <div id="nextActions" class="action-list">
+              <p>等待生成审查意见。</p>
+            </div>
+          </div>
+
+          <div class="rail-card">
+            <div class="section-title compact">
+              <div>
+                <p class="eyebrow">复核状态</p>
+                <h3>质量门摘要</h3>
+              </div>
+            </div>
+            <div id="qualityDigest" class="quality-digest empty">暂无质量门结果。</div>
+            <button id="openEvidence" class="wide-button">查看报告与证据</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div id="evidenceDrawer" class="drawer wide-drawer" aria-hidden="true">
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <aside class="drawer-panel">
+      <div class="drawer-head">
+        <div>
+          <p class="eyebrow">审查结果</p>
+          <h2>报告与证据链</h2>
+        </div>
+        <button class="close-button" data-close-drawer>×</button>
+      </div>
+      <nav class="tabs" aria-label="审查产物">
+        <button class="tab active" data-tab="report">审查报告</button>
+        <button class="tab" data-tab="artifacts">原始证据</button>
+        <button class="tab" data-tab="logs">技术日志</button>
+      </nav>
+
+      <section class="content-grid">
+        <div id="reportPanel" class="panel active-panel">
+          <div class="panel-title">
+            <h3>AI 审查记录</h3>
+            <span id="reportPath"></span>
+          </div>
+          <article id="reportContent" class="markdown empty">审查完成后在这里查看报告。</article>
+        </div>
+
+        <div id="artifactsPanel" class="panel">
+          <div class="panel-title">
+            <h3>原始证据</h3>
+            <span>需要复查时再查看 01-08 产物原文</span>
+          </div>
+          <div class="artifact-layout">
+            <div id="artifactNav" class="artifact-nav"></div>
+            <pre id="artifactContent" class="artifact-content">暂无中间产物。</pre>
+          </div>
+        </div>
+
+        <div id="logsPanel" class="panel">
+          <div class="panel-title">
+            <h3>技术日志</h3>
+            <span id="jobIdLabel"></span>
+          </div>
+          <pre id="logsContent" class="logs">等待任务启动。</pre>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

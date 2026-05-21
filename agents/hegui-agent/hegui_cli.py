@@ -369,6 +369,18 @@ def extract_section_wiki_refs(entry_guide: str, section_number: str) -> list[str
     return extract_wiki_refs(extract_numbered_section(entry_guide, section_number))
 
 
+def extract_unconditional_route_refs(entry_guide: str) -> list[str]:
+    section = extract_numbered_section(entry_guide, "5")
+    match = re.search(
+        r"无论品类如何，必须路由：\s*(.*?)(?=\n如果画像命中|\n###|\Z)",
+        section,
+        flags=re.DOTALL,
+    )
+    if match:
+        return extract_wiki_refs(match.group(1))
+    return extract_section_wiki_refs(entry_guide, "5")
+
+
 def extract_conditional_route_refs(entry_guide: str) -> list[tuple[str, list[str]]]:
     section = extract_numbered_section(entry_guide, "5")
     requirements: list[tuple[str, list[str]]] = []
@@ -1182,11 +1194,7 @@ def direct_chat_review(
         for _, refs in conditional_route_refs
         for ref in refs
     }
-    base_route_refs = [
-        ref
-        for ref in extract_section_wiki_refs(entry_guide_text, "5")
-        if ref not in conditional_route_ref_set
-    ]
+    base_route_refs = extract_unconditional_route_refs(entry_guide_text)
     conditional_action_ids = extract_conditional_action_ids(entry_guide_text)
 
     core_knowledge, core_pages = budget_wiki_pages(wiki_home, CORE_EXECUTION_PAGES, char_budget=52000)
