@@ -439,19 +439,8 @@ def extract_conditional_action_ids(entry_guide: str) -> list[tuple[str, list[str
 
 def extract_wiki_action_ids(text: str) -> list[str]:
     ids: list[str] = []
-    for action_id in re.findall(r"^动作ID::[ \t]*(\S+)", text, flags=re.MULTILINE):
+    for action_id in re.findall(r"动作ID::\s*([^\s]+)", text):
         if action_id not in ids:
-            ids.append(action_id)
-    for start_id, end_id in re.findall(r"`([A-Za-z0-9-]+A\d+)`\s*至\s*`([A-Za-z0-9-]+A\d+)`", text):
-        for action_id in expand_action_range(start_id, end_id):
-            if action_id not in ids:
-                ids.append(action_id)
-    for line in text.splitlines():
-        cells = split_markdown_table_row(line)
-        if not cells or set(cells[0]) <= {"-", ":"}:
-            continue
-        action_id = cells[0].strip("` ")
-        if re.fullmatch(r"[A-Za-z0-9-]+A\d+", action_id) and action_id not in ids:
             ids.append(action_id)
     return ids
 
@@ -465,23 +454,6 @@ def action_protocol_ids_for_pages(wiki_home: Path, pages: list[str]) -> list[str
             if action_id not in ids:
                 ids.append(action_id)
     return ids
-
-
-def action_ids_for_pages(wiki_home: Path, pages: list[str]) -> list[str]:
-    ids: list[str] = []
-    for rel in pages:
-        for action_id in extract_wiki_action_ids(read_wiki_page(wiki_home, rel)):
-            if action_id not in ids:
-                ids.append(action_id)
-    return ids
-
-
-def is_action_id_source_page(rel: str) -> bool:
-    if "审查动作协议" in rel:
-        return True
-    if "/20-知识点/" not in rel:
-        return False
-    return any(marker in rel for marker in ("动作化审查包", "专项审查包", "增强包"))
 
 
 def extract_metadata_values(text: str, key: str) -> list[str]:
@@ -531,7 +503,6 @@ def split_signal_terms(text: str) -> list[str]:
         "条件",
         "命中",
         "适用",
-        "评分办法",
         "技术要求",
         "技术需求",
         "技术参数",
@@ -1148,7 +1119,6 @@ CORE_EXECUTION_PAGES = [
     "wiki/05-知识中台/60-执行规范与运维层/50-审查协议/质量门规则.md",
     "wiki/06-合规审查点/10-审查点库/风险审查点总览.md",
     "wiki/06-合规审查点/15-招标文件基础通用审查点索引.md",
-    "wiki/06-合规审查点/16-货物服务工程通用审查点索引.md",
     "wiki/06-合规审查点/30-审查点治理/风险审查点分层治理规则.md",
     "wiki/06-合规审查点/30-审查点治理/风险审查点去重合并规则.md",
     "wiki/06-合规审查点/30-审查点治理/风险审查点冲突处理规则.md",
@@ -1667,8 +1637,7 @@ Wiki 元数据命中的候选路由页：
             [ref for ref in routed_refs if "审查动作协议" in ref],
         )
         action_protocol_text = action_protocol_summary(action_protocols)
-    action_id_source_refs = [ref for ref in routed_refs if is_action_id_source_page(ref)]
-    routed_page_action_ids = action_ids_for_pages(wiki_home, action_id_source_refs)
+    wiki_action_ids = [item["动作ID"] for item in action_protocols if item.get("动作ID")]
 
     actions_prompt = f"""你是政府采购招标文件合规审查生产线的外部执行主体。
 
@@ -1696,15 +1665,15 @@ Wiki 元数据命中的候选路由页：
 
 只输出 `03-动作清单` Markdown 内容。不得输出风险详情，不得生成最终报告。
 动作必须来自知识路由结果、逐章矩阵、通用审查协议和命中的品类动作协议。
-如果已路由知识页包含 `动作ID::`、动作编号表或 `A01 至 Axx` 动作范围，动作清单必须使用 Wiki 原文动作ID，不得翻译、改写或自造动作ID。
-本次从已路由动作协议和动作清单页读取到的动作ID：
-{chr(10).join(f"- {action_id}" for action_id in routed_page_action_ids) if routed_page_action_ids else "- 未从已路由知识页读取到动作ID，请按 Wiki 逐章矩阵和通用审查协议生成稳定动作ID。"}
+如果已路由知识页包含 `动作ID::`，动作清单必须使用 Wiki 原文动作ID，不得翻译、改写或自造动作ID。
+本次从已路由动作协议读取到的动作ID：
+{chr(10).join(f"- {action_id}" for action_id in wiki_action_ids) if wiki_action_ids else "- 未从已路由动作协议读取到动作ID，请按 Wiki 逐章矩阵和通用审查协议生成稳定动作ID。"}
 """
     active_action_ids: list[str] = []
     for term, action_ids in conditional_action_ids:
         if condition_hit(f"{profile}\n{profile_summary}\n{matched_package_summary}", term):
             active_action_ids.extend(action_ids)
-    active_action_ids.extend(routed_page_action_ids)
+    active_action_ids.extend(wiki_action_ids)
     prompt_stats.append(("03-动作清单", len(actions_prompt), estimate_tokens(actions_prompt)))
     actions, usage = chat_stage(
         base_url,
