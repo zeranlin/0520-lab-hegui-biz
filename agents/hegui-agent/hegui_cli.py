@@ -135,15 +135,22 @@ def split_numbered_text(numbered_text: str, max_chars: int) -> list[str]:
 
 def wiki_profile_signal_terms(wiki_home: Path, max_terms: int = 400) -> list[str]:
     roots = [
-        wiki_home / "wiki/15-行业基础",
-        wiki_home / "wiki/20-知识点",
-        wiki_home / "wiki/70-审查协议",
+        wiki_home / "wiki/05-知识中台/10-L0国家政策通用层/15-行业基础",
+        wiki_home / "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点",
+        wiki_home / "wiki/05-知识中台/10-L0国家政策通用层/70-通用审查协议",
+        wiki_home / "wiki/05-知识中台/20-L1国家行业品目通用层",
+        wiki_home / "wiki/05-知识中台/30-L2省份地方增强层",
+        wiki_home / "wiki/05-知识中台/60-执行规范与运维层/50-审查协议",
+        wiki_home / "wiki/06-合规审查点",
     ]
     signal_lines: list[str] = []
     for root in roots:
         if not root.is_dir():
             continue
-        for path in sorted(root.glob("*.md")):
+        for path in sorted(root.rglob("*.md")):
+            rel = path.relative_to(wiki_home).as_posix()
+            if not is_allowed_knowledge_page(rel):
+                continue
             text = path.read_text(encoding="utf-8")
             for line in text.splitlines():
                 if re.search(r"(适用品目或场景|画像标签|命中信号|触发信号|高频章节|重点风险|必读章节)", line):
@@ -271,6 +278,8 @@ def extract_wiki_refs(text: str) -> list[str]:
 def is_allowed_knowledge_page(rel: str) -> bool:
     if rel in {"AGENTS.md", "wiki/index.md", ENTRY_GUIDE}:
         return True
+    if rel.startswith("wiki/05-知识中台/50-L4项目运行层/"):
+        return False
     allowed_prefixes = (
         "wiki/10-法规依据/",
         "wiki/15-行业基础/",
@@ -280,6 +289,8 @@ def is_allowed_knowledge_page(rel: str) -> bool:
         "wiki/60-提示词/",
         "wiki/70-审查协议/",
         "wiki/90-模板/",
+        "wiki/05-知识中台/",
+        "wiki/06-合规审查点/",
     )
     return rel.startswith(allowed_prefixes)
 
@@ -415,6 +426,14 @@ def extract_conditional_action_ids(entry_guide: str) -> list[tuple[str, list[str
         section,
     ):
         requirements.append((match.group(1).strip(), expand_action_range(match.group(2), match.group(3))))
+    for match in re.finditer(
+        r"如果文件画像命中(.+?)，.*?`([^`]+)`\s*至\s*`([^`]+)`",
+        section,
+        flags=re.DOTALL,
+    ):
+        item = (match.group(1).strip(), expand_action_range(match.group(2), match.group(3)))
+        if item not in requirements:
+            requirements.append(item)
     return requirements
 
 
@@ -447,6 +466,189 @@ def extract_metadata_values(text: str, key: str) -> list[str]:
             if value and value not in values:
                 values.append(value)
     return values
+
+
+def extract_metadata_value(text: str, key: str) -> str:
+    pattern = re.compile(rf"^{re.escape(key)}::\s*(.+)$", flags=re.MULTILINE)
+    match = pattern.search(text)
+    return match.group(1).strip() if match else ""
+
+
+def clean_signal_term(term: str) -> str:
+    return term.strip(" \t\r\n`*_#|:：;；,，。()（）/、\\[]<>《》")
+
+
+STRONG_SHORT_SIGNAL_TERMS = {"家具", "物业", "货物", "设备", "工程", "内蒙", "内蒙古", "医院", "学校"}
+
+
+def split_signal_terms(text: str) -> list[str]:
+    stopwords = {
+        "全部",
+        "项目",
+        "项目名称",
+        "默认",
+        "调用",
+        "采购",
+        "采购标的",
+        "采购对象",
+        "采购品目",
+        "政府采购",
+        "招标文件",
+        "文件",
+        "审查",
+        "服务",
+        "工程",
+        "通用",
+        "规则",
+        "条件",
+        "命中",
+        "适用",
+        "技术要求",
+        "技术需求",
+        "技术参数",
+        "产品名称",
+        "服务内容",
+    }
+    normalized = re.sub(r"\[\[[^\]]+\]\]", " ", text)
+    normalized = re.sub(
+        r"(文件画像|采购品目|项目名称|服务内容|采购标的|采购对象|技术需求|适用范围|触发条件|政府采购|命中|项目|采购)",
+        " ",
+        normalized,
+    )
+    normalized = re.sub(r"(或者|以及|或|和|及|为|类)", " ", normalized)
+    normalized = re.sub(r"[`*_#|:：;；,，。()（）/、\\[\\]<>《》]", " ", normalized)
+    terms: list[str] = []
+    for term in re.findall(r"[\u4e00-\u9fffA-Za-z0-9][\u4e00-\u9fffA-Za-z0-9+-]{1,28}", normalized):
+        term = clean_signal_term(term)
+        if not term or term in stopwords or re.fullmatch(r"\d+", term):
+            continue
+        if len(term) <= 2 and term not in STRONG_SHORT_SIGNAL_TERMS:
+            continue
+        if term not in terms:
+            terms.append(term)
+    return terms
+
+
+def extract_registry_packages(wiki_home: Path) -> list[dict[str, object]]:
+    registry = read_wiki_page(wiki_home, "wiki/05-知识中台/03-知识包注册表.md")
+    if not registry:
+        return []
+    packages: list[dict[str, object]] = []
+    pattern = re.compile(r"^###\s+(.+?)\n(.*?)(?=^###\s+|\Z)", flags=re.MULTILINE | re.DOTALL)
+    for match in pattern.finditer(registry):
+        block = match.group(2)
+        package_id = extract_metadata_value(block, "知识包ID") or match.group(1).strip()
+        include_match = re.search(r"包含页面::\s*(.*?)(?=\n\S[^:\n]*::|\n###|\Z)", block, flags=re.DOTALL)
+        refs = extract_wiki_refs(include_match.group(1) if include_match else "")
+        packages.append(
+            {
+                "id": package_id,
+                "name": extract_metadata_value(block, "名称"),
+                "level": extract_metadata_value(block, "层级"),
+                "status": extract_metadata_value(block, "状态"),
+                "version": extract_metadata_value(block, "版本"),
+                "scope": extract_metadata_value(block, "适用范围"),
+                "trigger": extract_metadata_value(block, "触发条件"),
+                "permission": extract_metadata_value(block, "权限"),
+                "action_expand": extract_metadata_value(block, "动作展开"),
+                "refs": refs,
+            }
+        )
+    return packages
+
+
+def package_root_from_ref(ref: str) -> str | None:
+    parts = ref.split("/")
+    if len(parts) >= 5 and parts[:3] == ["wiki", "05-知识中台", "20-L1国家行业品目通用层"]:
+        return "/".join(parts[:5])
+    if len(parts) >= 5 and parts[:3] == ["wiki", "05-知识中台", "30-L2省份地方增强层"]:
+        return "/".join(parts[:5])
+    return None
+
+
+def action_protocol_refs_for_package(wiki_home: Path, refs: list[str]) -> list[str]:
+    protocol_refs: list[str] = []
+    roots = {package_root_from_ref(ref) for ref in refs}
+    for root_rel in sorted(root for root in roots if root):
+        root = wiki_home / root_rel
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*审查动作协议.md")):
+            rel = path.relative_to(wiki_home).as_posix()
+            if is_allowed_knowledge_page(rel) and rel not in protocol_refs:
+                protocol_refs.append(rel)
+    return protocol_refs
+
+
+def matched_registry_packages(
+    wiki_home: Path,
+    profile: str,
+    numbered_text: str,
+    max_packages: int = 8,
+) -> list[tuple[dict[str, object], int, list[str], list[str]]]:
+    full_haystack = f"{profile}\n{numbered_text}"
+    matches: list[tuple[dict[str, object], int, list[str], list[str]]] = []
+    for package in extract_registry_packages(wiki_home):
+        package_id = str(package.get("id") or "")
+        if package_id == "PKG-L4-PROJECT-RECORDS":
+            continue
+        trigger = str(package.get("trigger") or "")
+        scope = str(package.get("scope") or "")
+        name = str(package.get("name") or "")
+        if "全部项目默认调用" in trigger or "全部政府采购招标文件" in scope:
+            matches.append((package, 1000, ["全部项目默认调用"], []))
+            continue
+        level = str(package.get("level") or "")
+        haystack = full_haystack if level.startswith("L2") or package_id.startswith("PKG-06-") else profile
+        terms = split_signal_terms(f"{name} {scope} {trigger}")
+        hit_terms = [
+            term
+            for term in terms
+            if term and haystack.count(term) >= (1 if len(term) >= 4 or term in STRONG_SHORT_SIGNAL_TERMS else 2)
+        ]
+        if not hit_terms:
+            continue
+        evidence = evidence_lines_for_terms(numbered_text, hit_terms, max_lines=8)
+        score = sum(max(1, min(len(term), 8)) for term in hit_terms)
+        matches.append((package, score, hit_terms[:12], evidence))
+    matches.sort(key=lambda item: (-item[1], str(item[0].get("id") or "")))
+    return matches[:max_packages]
+
+
+def matched_packages_summary(matches: list[tuple[dict[str, object], int, list[str], list[str]]]) -> str:
+    if not matches:
+        return "- 未从知识包注册表稳定命中额外知识包。"
+    rows: list[str] = []
+    for package, score, terms, evidence in matches:
+        refs = [str(ref) for ref in package.get("refs", [])]
+        rows.append(f"## {package.get('id', '')} {package.get('name', '')}".strip())
+        rows.append(f"知识包版本:: {package.get('version', '')}")
+        rows.append(f"知识包状态:: {package.get('status', '')}")
+        rows.append(f"权限状态:: {package.get('permission', '')}")
+        rows.append(f"触发条件:: {package.get('trigger', '')}")
+        rows.append(f"命中信号数:: {score}")
+        rows.append("命中信号:: " + "、".join(terms))
+        if refs:
+            rows.append("包含页面::")
+            rows.extend(f"- [[{ref}]]" for ref in refs)
+        if evidence:
+            rows.append("原文证据::")
+            rows.extend(f"- {line}" for line in evidence[:5])
+        rows.append("")
+    return "\n".join(rows).strip()
+
+
+def refs_from_matched_packages(
+    wiki_home: Path,
+    matches: list[tuple[dict[str, object], int, list[str], list[str]]],
+) -> list[str]:
+    refs: list[str] = []
+    for package, _, _, _ in matches:
+        package_refs = [str(ref) for ref in package.get("refs", [])]
+        for ref in [*package_refs, *action_protocol_refs_for_package(wiki_home, package_refs)]:
+            if ref and is_allowed_knowledge_page(ref) and ref not in refs:
+                refs.append(ref)
+    return refs
 
 
 def wiki_page_signal_terms(text: str) -> list[str]:
@@ -513,7 +715,7 @@ def matched_wiki_pages(
         root = wiki_home / root_rel
         if not root.is_dir():
             continue
-        for path in sorted(root.glob("*.md")):
+        for path in sorted(root.rglob("*.md")):
             rel = path.relative_to(wiki_home).as_posix()
             if not is_allowed_knowledge_page(rel):
                 continue
@@ -533,13 +735,12 @@ def matched_action_protocol_pages(
     numbered_text: str,
     max_pages: int = 6,
 ) -> list[tuple[str, int, list[str], list[str]]]:
-    root = wiki_home / "wiki/70-审查协议"
-    if not root.is_dir():
-        return []
     matches: list[tuple[str, int, list[str], list[str]]] = []
     generic_terms = {"全国", "全国通用规则", "深圳市项目优先适用深圳地方规则", "公开招标"}
-    for path in sorted(root.glob("*审查动作协议.md")):
+    for path in sorted((wiki_home / "wiki").rglob("*审查动作协议.md")):
         rel = path.relative_to(wiki_home).as_posix()
+        if not is_allowed_knowledge_page(rel):
+            continue
         text = path.read_text(encoding="utf-8")
         terms = [term for term in wiki_page_applicability_terms(text) if term not in generic_terms]
         hit_terms = [
@@ -648,17 +849,17 @@ def forced_route_rows(matches: list[tuple[str, int, list[str], list[str]]]) -> s
         "",
         "## Wiki协议强制路由补齐",
         "",
-        "| 画像字段 | 命中规则 | 调用知识页 | 调用原因 | 适用层级 | 适用地域 | 适用品类或场景 | 是否必读 | 执行状态 |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 知识包ID | 知识包名称 | 知识包版本 | 知识包状态 | 画像字段 | 命中规则 | 调用知识页 | 调用原因 | 适用层级 | 适用地域 | 适用品类或场景 | 是否必读 | 执行状态 | 权限状态 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for rel, _, terms, _ in matches:
         hit_rule = "、".join(terms) if terms else "Wiki 元数据命中"
         rows.append(
-            "| 品目/标的属性 | "
+            "| 待确认 | 待确认 | 待确认 | 待确认 | 品目/标的属性 | "
             f"{hit_rule} | [[{rel}]] | "
             "本页由执行器按 LLM Wiki 页头适用范围和待审文件原文稳定命中，作为本次动作清单来源 | "
             "品目/动作协议 | 全国 | "
-            f"{hit_rule} | 是 | 已调用 |"
+            f"{hit_rule} | 是 | 已调用 | 待确认 |"
         )
     return "\n".join(rows)
 
@@ -693,7 +894,7 @@ def extract_protocol_field_value(content: str, field: str) -> str:
 
 
 def normalize_condition_term(term: str) -> str:
-    return term.strip(" ：:，,。；;")
+    return term.strip(" `：:，,。；;")
 
 
 def condition_hit(profile: str, term: str) -> bool:
@@ -905,49 +1106,70 @@ def budget_wiki_pages(wiki_home: Path, pages: list[str], char_budget: int) -> tu
 
 CORE_EXECUTION_PAGES = [
     ENTRY_GUIDE,
-    "wiki/70-审查协议/知识驱动审查执行规范.md",
-    "wiki/70-审查协议/政府采购招标文件业务审查流水线.md",
-    "wiki/70-审查协议/政府采购招标文件审查协议.md",
-    "wiki/20-知识点/知识分层与路由规则.md",
-    "wiki/20-知识点/政府采购逐章审查矩阵.md",
-    "wiki/70-审查协议/风险原子化规则.md",
-    "wiki/70-审查协议/质量门规则.md",
-    "wiki/25-风险审查点/风险审查点总览.md",
-    "wiki/90-模板/审查记录模板.md",
-    "wiki/90-模板/AI调度运行记录模板.md",
+    "wiki/05-知识中台/03-知识包注册表.md",
+    "wiki/05-知识中台/04-知识包版本清单.md",
+    "wiki/05-知识中台/05-知识包权限模型.md",
+    "wiki/05-知识中台/07-执行器消费契约.md",
+    "wiki/05-知识中台/60-执行规范与运维层/50-审查协议/知识驱动审查执行规范.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/70-通用审查协议/政府采购招标文件业务审查流水线.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/70-通用审查协议/政府采购招标文件审查协议.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点/知识分层与路由规则.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点/政府采购逐章审查矩阵.md",
+    "wiki/05-知识中台/60-执行规范与运维层/50-审查协议/风险原子化规则.md",
+    "wiki/05-知识中台/60-执行规范与运维层/50-审查协议/质量门规则.md",
+    "wiki/06-合规审查点/10-审查点库/风险审查点总览.md",
+    "wiki/06-合规审查点/15-招标文件基础通用审查点索引.md",
+    "wiki/06-合规审查点/30-审查点治理/风险审查点分层治理规则.md",
+    "wiki/06-合规审查点/30-审查点治理/风险审查点去重合并规则.md",
+    "wiki/06-合规审查点/30-审查点治理/风险审查点冲突处理规则.md",
+    "wiki/06-合规审查点/30-审查点治理/风险审查点治理收口报告.md",
+    "wiki/05-知识中台/60-执行规范与运维层/90-模板/审查记录模板.md",
+    "wiki/05-知识中台/60-执行规范与运维层/90-模板/AI调度运行记录模板.md",
 ]
 
 
 PROFILE_PAGES = [
     ENTRY_GUIDE,
-    "wiki/20-知识点/政府采购招标文件画像.md",
-    "wiki/15-行业基础/政府采购专项场景画像.md",
-    "wiki/60-提示词/招标文件画像提示词.md",
+    "wiki/05-知识中台/03-知识包注册表.md",
+    "wiki/05-知识中台/07-执行器消费契约.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点/政府采购招标文件画像.md",
+    "wiki/05-知识中台/10-L0国家政策通用层/15-行业基础/政府采购专项场景画像.md",
+    "wiki/05-知识中台/60-执行规范与运维层/60-提示词/招标文件画像提示词.md",
 ]
 
 
 def risk_review_point_catalog(wiki_home: Path) -> str:
-    root = wiki_home / "wiki/25-风险审查点"
+    root = wiki_home / "wiki/06-合规审查点/10-审查点库"
     if not root.is_dir():
         return ""
     rows: list[str] = []
-    for path in sorted(root.glob("*.md")):
+    for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(wiki_home).as_posix()
+        if not is_allowed_knowledge_page(rel):
+            continue
         title = path.stem
         rows.append(f"- [[{rel}]] {title}")
     return "\n".join(rows)
 
 
 def law_catalog(wiki_home: Path) -> str:
-    root = wiki_home / "wiki/10-法规依据"
-    if not root.is_dir():
-        return ""
     rows: list[str] = []
-    for path in sorted(root.glob("*.md")):
-        rel = path.relative_to(wiki_home).as_posix()
-        title = path.stem
-        rows.append(f"- [[{rel}]] {title}")
-    return "\n".join(rows)
+    roots = [
+        wiki_home / "wiki/05-知识中台/10-L0国家政策通用层/10-法规依据",
+        wiki_home / "wiki/05-知识中台/20-L1国家行业品目通用层",
+        wiki_home / "wiki/05-知识中台/30-L2省份地方增强层",
+        wiki_home / "wiki/06-合规审查点/90-横向专题增强包/10-法规依据",
+    ]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.md")):
+            rel = path.relative_to(wiki_home).as_posix()
+            if "/10-法规依据/" not in rel or not is_allowed_knowledge_page(rel):
+                continue
+            title = path.stem
+            rows.append(f"- [[{rel}]] {title}")
+    return "\n".join(dict.fromkeys(rows))
 
 
 def stage_file(path: Path, title: str, content: str) -> None:
@@ -1259,31 +1481,64 @@ def direct_chat_review(
     stage_file(profile_path, "01-文件画像", profile)
 
     profile_summary = profile_protocol_summary(profile, protocol_fields["01-文件画像"])
+    matched_packages = matched_registry_packages(wiki_home, profile, numbered_text)
+    matched_package_refs = refs_from_matched_packages(wiki_home, matched_packages)
+    matched_package_summary = matched_packages_summary(matched_packages)
     matched_route_pages = matched_wiki_pages(
         wiki_home,
         numbered_text,
         [
-            "wiki/10-法规依据",
-            "wiki/15-行业基础",
-            "wiki/20-知识点",
-            "wiki/25-风险审查点",
+            "wiki/05-知识中台/10-L0国家政策通用层/10-法规依据",
+            "wiki/05-知识中台/10-L0国家政策通用层/15-行业基础",
+            "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点",
+            "wiki/05-知识中台/20-L1国家行业品目通用层",
+            "wiki/05-知识中台/30-L2省份地方增强层",
+            "wiki/06-合规审查点/10-审查点库",
+            "wiki/06-合规审查点/90-横向专题增强包",
         ],
         min_score=1,
         max_pages=28,
     )
+    routable_matched_route_pages = [
+        item
+        for item in matched_route_pages
+        if item[0].startswith("wiki/06-合规审查点/")
+        or item[0].startswith("wiki/05-知识中台/10-L0国家政策通用层/")
+    ]
     matched_protocol_pages = matched_action_protocol_pages(wiki_home, numbered_text)
-    matched_route_refs = stable_refs_from_matches([*matched_protocol_pages, *matched_route_pages])
-    required_matched_refs = stable_refs_from_matches(matched_protocol_pages)
-    matched_route_summary = matched_pages_summary([*matched_protocol_pages, *matched_route_pages])
-    protocol_pages = stable_refs_from_matches(matched_protocol_pages)
+    package_protocol_matches = [
+        (ref, 1000, ["知识包注册表命中"], [])
+        for ref in matched_package_refs
+        if "审查动作协议" in ref
+    ]
+    matched_route_refs = list(
+        dict.fromkeys(
+            [
+                *matched_package_refs,
+                *[
+                    ref
+                    for ref in stable_refs_from_matches(routable_matched_route_pages)
+                ],
+            ]
+        )
+    )
+    required_matched_refs = list(
+        dict.fromkeys(
+            [
+                *matched_package_refs,
+            ]
+        )
+    )
+    matched_route_summary = matched_pages_summary(routable_matched_route_pages)
+    protocol_pages = list(dict.fromkeys(stable_refs_from_matches(package_protocol_matches)))
     action_protocols = extract_action_protocols(wiki_home, protocol_pages)
     action_protocol_text = action_protocol_summary(action_protocols)
     route_knowledge, route_pages = budget_wiki_pages(
         wiki_home,
         [
             *CORE_EXECUTION_PAGES,
-            "wiki/20-知识点/政府采购招标文件画像.md",
-            "wiki/15-行业基础/政府采购专项场景画像.md",
+            "wiki/05-知识中台/10-L0国家政策通用层/20-通用知识点/政府采购招标文件画像.md",
+            "wiki/05-知识中台/10-L0国家政策通用层/15-行业基础/政府采购专项场景画像.md",
             *matched_route_refs,
         ],
         char_budget=62000,
@@ -1298,7 +1553,7 @@ def direct_chat_review(
 """
     active_route_refs = list(base_route_refs)
     for term, refs in conditional_route_refs:
-        if condition_hit(f"{profile}\n{profile_summary}\n{matched_route_summary}", term):
+        if condition_hit(f"{profile}\n{profile_summary}\n{matched_package_summary}", term):
             active_route_refs.extend(refs)
     active_route_refs.extend(required_matched_refs)
 
@@ -1321,11 +1576,16 @@ def direct_chat_review(
 文件画像协议摘要：
 {profile_summary}
 
+知识包注册表稳定命中的候选知识包：
+{matched_package_summary}
+
 Wiki 元数据命中的候选路由页：
 {matched_route_summary}
 
 只输出 `02-知识路由表` Markdown 内容。不得输出风险清单，不得生成最终报告。
-必须说明每个调用知识页的调用原因、适用层级、是否必读和执行状态。
+必须使用入口指引要求的 `02-知识路由表` 字段，包含：知识包ID、知识包名称、知识包版本、知识包状态、画像字段、命中规则、调用知识页、调用原因、适用层级、适用地域、适用品类或场景、是否必读、执行状态、权限状态。
+必须说明每个调用知识页的调用原因、适用层级、是否必读、执行状态和权限状态。
+知识包注册表稳定命中的知识包及其包含页面，必须作为本次知识路由来源；如认为某页不适用，只能在同一知识包内说明不适用边界，不得漏掉知识包ID、版本和权限状态。
 已命中的动作协议页必须作为本次动作来源纳入路由，不能写入未纳入、不适用或不单独列为必做。
 其他 Wiki 元数据命中的候选路由页可按适用性纳入；不纳入时必须说明不适用原因。
 每个知识页请尽量使用相对于 LLM Wiki 的稳定路径。
@@ -1341,7 +1601,18 @@ Wiki 元数据命中的候选路由页：
         attempt_rows=attempt_rows,
     )
     route = ensure_protocol_fields(route, protocol_fields["02-知识路由表"])
-    route = ensure_forced_route_refs(route, matched_protocol_pages)
+    base_route_rows = [
+        (ref, 1000, ["基础必读规则"], [])
+        for ref in base_route_refs
+        if is_allowed_knowledge_page(ref)
+    ]
+    matched_package_page_rows = [
+        (ref, score, terms, evidence)
+        for package, score, terms, evidence in matched_packages
+        for ref in [*list(package.get("refs", [])), *action_protocol_refs_for_package(wiki_home, list(package.get("refs", [])))]
+        if isinstance(ref, str) and is_allowed_knowledge_page(ref)
+    ]
+    route = ensure_forced_route_refs(route, [*base_route_rows, *matched_package_page_rows])
     route_issues = validate_wiki_protocol_output(
         "02-知识路由表",
         route,
@@ -1400,7 +1671,7 @@ Wiki 元数据命中的候选路由页：
 """
     active_action_ids: list[str] = []
     for term, action_ids in conditional_action_ids:
-        if condition_hit(f"{profile}\n{profile_summary}\n{matched_route_summary}", term):
+        if condition_hit(f"{profile}\n{profile_summary}\n{matched_package_summary}", term):
             active_action_ids.extend(action_ids)
     active_action_ids.extend(wiki_action_ids)
     prompt_stats.append(("03-动作清单", len(actions_prompt), estimate_tokens(actions_prompt)))
